@@ -83,6 +83,60 @@ Each scenario has a config file in `/scripts/scenarios/` that defines:
 - Color assignments per territory
 - Keyframe year labels
 
+### Scenario config schema
+
+Each scenario config file follows this format. The adapter is specified explicitly per source file — do not auto-detect from file extension.
+
+```json
+{
+  "scenario": "roman_empire",
+  "label": "Roman Empire",
+  "startYear": -27,
+  "endYear": 476,
+  "simplifyTolerance": 0.05,
+  "sourceFiles": [
+    {
+      "path": "data/raw/roman_empire/provinces.shp",
+      "adapter": "shapefile",
+      "yearField": "year",
+      "nameField": "province"
+    },
+    {
+      "path": "data/raw/roman_empire/boundaries.geojson",
+      "adapter": "geojson",
+      "yearField": "date",
+      "nameField": "name"
+    }
+  ],
+  "territories": [
+    {
+      "name": "Roman Republic",
+      "color": "#c0392b",
+      "sourceNameMatch": "Roman Republic"
+    },
+    {
+      "name": "Roman Empire",
+      "color": "#e74c3c",
+      "sourceNameMatch": "Roman Empire"
+    }
+  ],
+  "keyframes": [
+    { "year": -27, "label": "27 BC" },
+    { "year": 14, "label": "14 AD" },
+    { "year": 117, "label": "117 AD" },
+    { "year": 395, "label": "395 AD" },
+    { "year": 476, "label": "476 AD" }
+  ]
+}
+```
+
+**Notes on config:**
+- `adapter` must be one of: `"geojson"`, `"shapefile"`, `"topojson"` — always set explicitly, never inferred
+- `yearField` and `nameField` tell the adapter which properties in the source data map to year and territory name
+- `sourceNameMatch` links a territory color/label to a value in the source data's name field
+- `simplifyTolerance` is optional — defaults to `0.05` if omitted. Override for smaller-scale maps that need more detail (e.g. `0.01` for USSR collapse)
+- `keyframes` defines which years to extract — the script pulls geometry for each listed year from the source data
+
 ---
 
 ## Tech stack
@@ -134,7 +188,7 @@ Raw source files go in `/data/raw/`. This directory is gitignored — do not com
 ## Output geometry rules
 
 - All output geometry must be in WGS84 (EPSG:4326). Reproject anything that isn't.
-- Run `@turf/simplify` on all output polygons with `tolerance: 0.05` — this is sufficient for screen rendering without visible quality loss.
+- Run `@turf/simplify` on all output polygons with `tolerance: 0.05` by default — this is sufficient for screen rendering without visible quality loss. Scenario configs can override this via `simplifyTolerance` for maps that need more or less detail.
 - Output files go in `/data/output/` as `{scenario_name}.json`
 - One file per scenario containing all keyframes.
 
@@ -172,6 +226,28 @@ MVP = ingestion script + D3 renderer + ffmpeg.wasm export. No accounts, no backe
 - Every script should be runnable from the command line with a clear usage message
 - Console output should be descriptive — log what's happening at each step
 - Errors should fail loudly with a clear message, not silently
+
+### Error handling
+
+- **Missing source files** in `/data/raw/` → fail with a clear message naming the missing file and where to download it
+- **Corrupt/unparseable source files** → fail with the file path and the underlying parse error
+- **Empty geometry output** → warn but don't fail (some keyframes may legitimately have no territory for a given year)
+- **Unsupported adapter type** → fail immediately with the list of valid adapters
+
+---
+
+## Phase 1 completion criteria
+
+Phase 1 is complete when all 8 scenario JSON files pass these checks:
+
+- Output validates against the internal keyframe schema (correct structure, all required fields present)
+- Each scenario has at least 3 keyframes
+- All geometries are valid GeoJSON (no self-intersections, rings properly closed)
+- All coordinates are in WGS84 range (longitude -180 to 180, latitude -90 to 90)
+- File size is under 10 MB per scenario after simplification (warn if exceeded)
+- The script runs end-to-end for each scenario without errors
+
+Build a `validate.js` script that checks all of the above and reports pass/fail per scenario.
 
 ---
 

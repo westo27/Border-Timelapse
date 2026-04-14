@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Border Timelapse Viewer</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0f0f0f;
+      color: #eee;
+      font-family: system-ui, sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+    }
+
+    #scenario-picker { display: flex; gap: 8px; }
+
+    .scenario-btn {
+      background: #222;
+      color: #aaa;
+      border: 1px solid #333;
+      padding: 6px 14px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .scenario-btn.active { background: #333; color: #fff; border-color: #666; }
+
+    #map-container { position: relative; width: 900px; height: 500px; }
+
+    svg { width: 100%; height: 100%; }
+
+    .graticule { fill: none; stroke: #1a1a1a; stroke-width: 0.5; }
+    .sphere { fill: #111; }
+    .land { fill: #1c1c1c; }
+    .territory { opacity: 0.85; }
+
+    #controls { display: flex; align-items: center; gap: 12px; }
+
+    #year-label {
+      font-size: 28px;
+      font-weight: 700;
+      color: #fff;
+      min-width: 140px;
+      text-align: center;
+    }
+
+    button {
+      background: #222;
+      color: #fff;
+      border: 1px solid #444;
+      padding: 8px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    button:hover { background: #333; }
+    button:disabled { opacity: 0.3; cursor: default; }
+
+    #btn-play { min-width: 64px; }
+
+    #speed-control { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #666; }
+    #speed-control input { width: 80px; accent-color: #888; }
+
+    #progress-bar {
+      width: 900px;
+      height: 3px;
+      background: #222;
+      border-radius: 2px;
+      cursor: pointer;
+      position: relative;
+    }
+    #progress-fill {
+      height: 100%;
+      background: #666;
+      border-radius: 2px;
+      transition: width 0.1s linear;
+      pointer-events: none;
+    }
+
+    #legend {
+      display: flex;
+      gap: 16px;
+      font-size: 12px;
+      color: #aaa;
+      min-height: 18px;
+      flex-wrap: wrap;
+      justify-content: center;
+      max-width: 900px;
+    }
+    .legend-item { display: flex; align-items: center; gap: 6px; }
+    .legend-swatch { width: 12px; height: 12px; border-radius: 2px; flex-shrink: 0; }
+
+    #status { font-size: 12px; color: #555; min-height: 16px; }
+  </style>
+</head>
+<body>
+
+  <div id="scenario-picker"></div>
+  <div id="map-container"><svg id="map"></svg></div>
+  <div id="progress-bar"><div id="progress-fill"></div></div>
+
+  <div id="controls">
+    <button id="btn-prev">&#8592;</button>
+    <button id="btn-play">&#9654; Play</button>
+    <button id="btn-next">&#8594;</button>
+    <div id="year-label">—</div>
+    <div id="speed-control">
+      <span>Speed</span>
+      <input id="speed-slider" type="range" min="1" max="20" value="8">
+      <span id="speed-val">8×</span>
+    </div>
+  </div>
+
+  <div id="legend"></div>
+  <div id="status">Loading...</div>
+
+  <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
+  <script>
+    const SCENARIOS = [
+      { id: 'mongol_empire',  label: 'Mongol Empire' },
+      { id: 'british_empire', label: 'British Empire' },
+      { id: 'ussr_collapse',  label: 'USSR Collapse' },
+    ];
+
+    const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const WORLD_TOPO_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json';
+
+    let currentScenario = null;
+    let virtualFrames = [];   // all playable frames including interpolated ones
+    let currentVFrame = 0;
+    let playTimer = null;
+    let lastRenderedKF = -1;  // index of last rendered keyframe — skip re-render if unchanged
+
+    // -- projection ---------------------------------------------------------------
+
+    const svg = d3.select('#map');
+    const width = 900, height = 500;
+    svg.attr('viewBox', `0 0 ${width} ${height}`);
+
+    const projection = d3.geoNaturalEarth1()
+      .scale(153)
+      .translate([width / 2, height / 2]);
+
+    const path = d3.geoPath().projection(projection);
+    const g = svg.append('g');
+
+    g.append('path').datum({ type: 'Sphere' }).attr('class', 'sphere').attr('d', path);
+    g.append('path').datum(d3.geoGraticule()()).attr('class', 'graticule').attr('d', path);
+
+    const landLayer = g.append('g').attr('id', 'land-layer');
+
+    // Two territory layers for cross-fade transitions
+    const layers = [
+      g.append('g').attr('id', 'territory-layer-0'),
+      g.append('g').attr('id', 'territory-layer-1'),
+    ];
+    let activeLayer = 0;
+
+    // -- world base map -----------------------------------------------------------
+
+    async function loadWorld() {
+      const topo = await d3.json(WORLD_TOPO_URL);
+      landLayer.append('path')
+        .datum(topojson.feature(topo, topo.objects.land))
+        .attr('class', 'land')
+        .attr('d', path);
+    }
+
+    // -- virtual frame generation -------------------------------------------------
+    // Generates one frame per playStep unit between startYear and endYear.
+    // Each frame references the index of the most-recent actual keyframe whose
+    // date is <= the virtual frame's date — so the map only re-renders on change.
+
+    function toDateInt(y, m = 1, d = 1) {
+      return y * 10000 + m * 100 + d;
+    }
+
+    function buildVirtualFrames(scenario) {
+      const step = scenario.playStep || 'year';
+      const frames = [];
+
+      // Build sorted list of keyframe dates as integers for binary search
+      const kfDates = scenario.keyframes.map(kf =>
+        toDateInt(kf.year, kf.month ?? 1, kf.day ?? 1)
+      );
+
+      function activeKFIndex(dateInt) {
+        // Last keyframe whose date <= dateInt
+        let idx = 0;
+        for (let i = 0; i < kfDates.length; i++) {
+          if (kfDates[i] <= dateInt) idx = i;
+          else break;
+        }
+        return idx;
+      }
+
+      function makeLabel(y, m) {
+        return step === 'year' ? `${y}` : `${MONTHS[m - 1]} ${y}`;
+      }
+
+      const sy = scenario.startYear, ey = scenario.endYear;
+
+      if (step === 'year') {
+        for (let y = sy; y <= ey; y++) {
+          frames.push({ dateInt: toDateInt(y), label: `${y}`, kfIndex: activeKFIndex(toDateInt(y)) });
+        }
+      } else if (step === 'month') {
+        for (let y = sy; y <= ey; y++) {
+          const mEnd = y === ey ? 12 : 12;
+          for (let m = 1; m <= mEnd; m++) {
+            const d = toDateInt(y, m, 1);
+            frames.push({ dateInt: d, label: makeLabel(y, m), kfIndex: activeKFIndex(d) });
+          }
+        }
+      }
+
+      return frames;
+    }
+
+    // -- scenario loading ---------------------------------------------------------
+
+    async function loadScenario(id) {
+      stopPlay();
+      setStatus('Loading…');
+      let data;
+      try {
+        data = await d3.json(`data/output/${id}.json`);
+      } catch (e) {
+        setStatus(`Failed to load data/output/${id}.json`);
+        return;
+      }
+      currentScenario = data;
+      virtualFrames = buildVirtualFrames(data);
+      currentVFrame = 0;
+      lastRenderedKF = -1;
+      renderVFrame();
+      setStatus('');
+    }
+
+    // -- rendering ----------------------------------------------------------------
+
+    function renderVFrame() {
+      const vf = virtualFrames[currentVFrame];
+
+      document.getElementById('year-label').textContent = vf.label;
+      document.getElementById('progress-fill').style.width =
+        ((currentVFrame / (virtualFrames.length - 1)) * 100) + '%';
+
+      // Only re-render territories if the keyframe actually changed
+      if (vf.kfIndex !== lastRenderedKF) {
+        lastRenderedKF = vf.kfIndex;
+        const kf = currentScenario.keyframes[vf.kfIndex];
+        renderTerritories(kf);
+        renderLegend(kf);
+      }
+
+      document.getElementById('btn-prev').disabled = currentVFrame === 0;
+      document.getElementById('btn-next').disabled = currentVFrame === virtualFrames.length - 1;
+    }
+
+    const FADE_MS = 400;
+
+    function renderTerritories(kf) {
+      const next = 1 - activeLayer;
+      const incoming = layers[next];
+      const outgoing = layers[activeLayer];
+
+      // Build new content on the hidden layer first
+      incoming.selectAll('*').remove();
+      incoming.attr('opacity', 0);
+
+      for (const t of kf.territories) {
+        const polys = t.geometry.type === 'MultiPolygon'
+          ? t.geometry.coordinates
+          : [t.geometry.coordinates];
+
+        for (const poly of polys) {
+          const pts = poly[0].map(c => projection(c)).filter(Boolean);
+          if (pts.length < 3) continue;
+          incoming.append('polygon')
+            .attr('class', 'territory')
+            .attr('fill', t.color)
+            .attr('points', pts.map(p => p.join(',')).join(' '))
+            .append('title').text(t.name);
+        }
+      }
+
+      // Cross-fade: bring in new, push out old
+      incoming.transition().duration(FADE_MS).attr('opacity', 0.85);
+      outgoing.transition().duration(FADE_MS).attr('opacity', 0)
+        .on('end', () => outgoing.selectAll('*').remove());
+
+      activeLayer = next;
+    }
+
+    function renderLegend(kf) {
+      const legend = document.getElementById('legend');
+      legend.innerHTML = '';
+      for (const t of kf.territories) {
+        const item = document.createElement('div');
+        item.className = 'legend-item';
+        item.innerHTML = `<div class="legend-swatch" style="background:${t.color}"></div><span>${t.name}</span>`;
+        legend.appendChild(item);
+      }
+    }
+
+    // -- playback -----------------------------------------------------------------
+
+    function getFrameInterval() {
+      // speed slider 1-20 maps to ~800ms down to ~40ms per virtual frame
+      const speed = parseInt(document.getElementById('speed-slider').value);
+      return Math.round(800 / speed);
+    }
+
+    function startPlay() {
+      if (currentVFrame >= virtualFrames.length - 1) currentVFrame = 0;
+      document.getElementById('btn-play').textContent = '⏸ Pause';
+      function tick() {
+        currentVFrame++;
+        renderVFrame();
+        if (currentVFrame >= virtualFrames.length - 1) {
+          stopPlay();
+        } else {
+          playTimer = setTimeout(tick, getFrameInterval());
+        }
+      }
+      playTimer = setTimeout(tick, getFrameInterval());
+    }
+
+    function stopPlay() {
+      clearTimeout(playTimer);
+      playTimer = null;
+      document.getElementById('btn-play').textContent = '▶ Play';
+    }
+
+    document.getElementById('btn-play').addEventListener('click', () => {
+      if (playTimer) stopPlay(); else startPlay();
+    });
+
+    document.getElementById('btn-prev').addEventListener('click', () => {
+      stopPlay();
+      if (currentVFrame > 0) { currentVFrame--; renderVFrame(); }
+    });
+
+    document.getElementById('btn-next').addEventListener('click', () => {
+      stopPlay();
+      if (currentVFrame < virtualFrames.length - 1) { currentVFrame++; renderVFrame(); }
+    });
+
+    const speedSlider = document.getElementById('speed-slider');
+    speedSlider.addEventListener('input', () => {
+      document.getElementById('speed-val').textContent = speedSlider.value + '×';
+    });
+
+    // Click progress bar to seek
+    document.getElementById('progress-bar').addEventListener('click', e => {
+      stopPlay();
+      const rect = e.currentTarget.getBoundingClientRect();
+      const pct = (e.clientX - rect.left) / rect.width;
+      currentVFrame = Math.round(pct * (virtualFrames.length - 1));
+      renderVFrame();
+    });
+
+    // Keyboard
+    document.addEventListener('keydown', e => {
+      if (e.key === 'ArrowLeft')  { stopPlay(); if (currentVFrame > 0) { currentVFrame--; renderVFrame(); } }
+      if (e.key === 'ArrowRight') { stopPlay(); if (currentVFrame < virtualFrames.length - 1) { currentVFrame++; renderVFrame(); } }
+      if (e.key === ' ')          { e.preventDefault(); if (playTimer) stopPlay(); else startPlay(); }
+    });
+
+    // -- scenario picker ----------------------------------------------------------
+
+    const picker = document.getElementById('scenario-picker');
+    SCENARIOS.forEach(s => {
+      const btn = document.createElement('button');
+      btn.className = 'scenario-btn';
+      btn.textContent = s.label;
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.scenario-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        loadScenario(s.id);
+      });
+      picker.appendChild(btn);
+    });
+
+    function setStatus(msg) {
+      document.getElementById('status').textContent = msg;
+    }
+
+    // -- init ---------------------------------------------------------------------
+
+    async function init() {
+      await loadWorld();
+      picker.querySelector('.scenario-btn').classList.add('active');
+      await loadScenario(SCENARIOS[0].id);
+    }
+
+    init();
+  </script>
+</body>
+</html>

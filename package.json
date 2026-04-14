@@ -1,0 +1,19 @@
+{
+  "name": "border-timelapse",
+  "version": "0.1.0",
+  "description": "CLI tool for converting historical geographic data into keyframe JSON for animated border map videos",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "convert": "node scripts/convert.js"
+  },
+  "dependencies": {
+    "@turf/helpers": "^7.3.4",
+    "@turf/projection": "^7.0.0",
+    "@turf/rewind": "^7.3.4",
+    "@turf/simplify": "^7.0.0",
+    "@turf/union": "^7.0.0",
+    "shapefile": "^0.6.6",
+    "topojson-client": "^3.1.0"
+  }
+}

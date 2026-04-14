@@ -1,0 +1,54 @@
+{
+  "scenario": "mongol_empire",
+  "label": "Mongol Empire",
+  "startYear": 1206,
+  "endYear": 1368,
+  "simplifyTolerance": 0.05,
+  "sourceFiles": [
+    { "year": 1200, "path": "data/raw/historical-basemaps/world_1200.geojson", "adapter": "geojson" },
+    { "year": 1279, "path": "data/raw/historical-basemaps/world_1279.geojson", "adapter": "geojson" },
+    { "year": 1300, "path": "data/raw/historical-basemaps/world_1300.geojson", "adapter": "geojson" },
+    { "year": 1368, "path": "data/raw/historical-basemaps/world_1400.geojson", "adapter": "geojson" }
+  ],
+  "territories": [
+    {
+      "name": "Mongol Empire",
+      "color": "#7B3F00",
+      "matchField": "NAME",
+      "matchValues": ["Mongol Empire"]
+    },
+    {
+      "name": "Great Khanate",
+      "color": "#C0392B",
+      "matchField": "SUBJECTO",
+      "matchValues": ["Mongol Empire"],
+      "matchExclude": {
+        "NAME": ["Mongol Empire", "Chagatai Khanate", "Ilkhanate", "Khanate of the Golden Horde"]
+      }
+    },
+    {
+      "name": "Chagatai Khanate",
+      "color": "#E67E22",
+      "matchField": "NAME",
+      "matchValues": ["Chagatai Khanate"]
+    },
+    {
+      "name": "Ilkhanate",
+      "color": "#8E44AD",
+      "matchField": "NAME",
+      "matchValues": ["Ilkhanate"]
+    },
+    {
+      "name": "Golden Horde",
+      "color": "#F1C40F",
+      "matchField": "NAME",
+      "matchValues": ["Khanate of the Golden Horde"]
+    }
+  ],
+  "keyframes": [
+    { "year": 1200, "label": "1200 AD" },
+    { "year": 1279, "label": "1279 AD" },
+    { "year": 1300, "label": "1300 AD" },
+    { "year": 1368, "label": "1368 AD" }
+  ]
+}

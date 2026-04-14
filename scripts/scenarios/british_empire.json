@@ -1,0 +1,33 @@
+{
+  "scenario": "british_empire",
+  "label": "British Empire",
+  "startYear": 1815,
+  "endYear": 1960,
+  "simplifyTolerance": 0.05,
+  "sourceFiles": [
+    { "year": 1815, "path": "data/raw/historical-basemaps/world_1815.geojson", "adapter": "geojson" },
+    { "year": 1880, "path": "data/raw/historical-basemaps/world_1880.geojson", "adapter": "geojson" },
+    { "year": 1914, "path": "data/raw/historical-basemaps/world_1914.geojson", "adapter": "geojson" },
+    { "year": 1938, "path": "data/raw/historical-basemaps/world_1938.geojson", "adapter": "geojson" },
+    { "year": 1960, "path": "data/raw/historical-basemaps/world_1960.geojson", "adapter": "geojson" }
+  ],
+  "territories": [
+    {
+      "name": "British Empire",
+      "color": "#C0392B",
+      "matchField": "SUBJECTO",
+      "matchValues": [
+        "United Kingdom",
+        "United Kingdom of Great Britain and Ireland",
+        "Great Britain"
+      ]
+    }
+  ],
+  "keyframes": [
+    { "year": 1815, "label": "1815 AD" },
+    { "year": 1880, "label": "1880 AD" },
+    { "year": 1914, "label": "1914 AD" },
+    { "year": 1938, "label": "1938 AD" },
+    { "year": 1960, "label": "1960 AD" }
+  ]
+}
